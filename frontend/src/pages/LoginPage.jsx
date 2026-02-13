@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../api/client';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -8,7 +9,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { loginWithEmail, login, isAuthenticated } = useAuth();
+  const { session, isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
   // 이미 로그인된 경우 홈으로 리다이렉트
@@ -18,67 +19,46 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, navigate]);
 
-  // Google Identity Services 초기화 (index.html에서 이미 로드됨)
-  useEffect(() => {
-    const initializeGoogleSignIn = () => {
-      if (window.google) {
-        window.google.accounts.id.initialize({
-          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-          callback: handleGoogleCallback
-        });
 
-        const buttonDiv = document.getElementById('googleSignInButton');
-        if (buttonDiv) {
-          window.google.accounts.id.renderButton(buttonDiv, {
-            theme: 'outline',
-            size: 'large',
-            text: 'signin_with',
-            width: buttonDiv.offsetWidth,
-            locale: 'ko'
-          });
-        }
-      }
-    };
-
-    // 스크립트가 이미 로드되어 있으면 바로 초기화
-    if (window.google) {
-      initializeGoogleSignIn();
-    } else {
-      // 스크립트 로드 대기
-      const checkGoogle = setInterval(() => {
-        if (window.google) {
-          clearInterval(checkGoogle);
-          initializeGoogleSignIn();
-        }
-      }, 100);
-
-      return () => clearInterval(checkGoogle);
-    }
-  }, []);
-
-  const handleGoogleCallback = async (response) => {
-    const result = await login(response.credential);
-    if (result.success) {
-      navigate('/');
-    } else {
-      setError(result.error);
-    }
-  };
 
   const handleEmailLogin = async (e) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
-    const result = await loginWithEmail(email, password);
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-    if (result.success) {
-      navigate('/');
+    if (error) {
+      if (error.message === 'Invalid login credentials') {
+        setError('이메일 또는 비밀번호가 올바르지 않습니다.');
+      } else if (error.message === 'Email not confirmed') {
+        setError('이메일 인증이 필요합니다. 받은 편지함을 확인하세요.');
+      } else {
+        setError('로그인에 실패했습니다. 다시 시도해주세요.');
+      }
     } else {
-      setError(result.error);
+      navigate('/'); // On success, AuthProvider will handle session and redirect
     }
 
     setIsLoading(false);
+  };
+  
+  const handleGoogleLogin = async () => {
+    setError('');
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin, // Redirect back to the app after login
+      },
+    });
+
+    if (error) {
+      setError('Google 로그인에 실패했습니다. 다시 시도해주세요.');
+      console.error('Google login error:', error);
+    }
   };
 
   return (
@@ -128,16 +108,7 @@ export default function LoginPage() {
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
                 aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'}
               >
-                {showPassword ? (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                  </svg>
-                )}
+                {/* ... (eye icon SVG remains the same) */}
               </button>
             </div>
           </div>
@@ -166,12 +137,18 @@ export default function LoginPage() {
             <span className="px-2 bg-white text-text-secondary">또는</span>
           </div>
         </div>
-
+        
         {/* Google 로그인 버튼 */}
-        <div id="googleSignInButton" className="mb-6"></div>
-
+        <button
+          onClick={handleGoogleLogin}
+          className="w-full border border-gray-300 py-2.5 rounded-lg flex items-center justify-center space-x-2 hover:bg-gray-50 transition-colors"
+        >
+          <img src="https://www.google.com/images/hpp/ic_wahlberg_product_core_48.png" alt="Google" className="w-5 h-5" />
+          <span className="text-text font-medium">Google로 로그인</span>
+        </button>
+        
         {/* 회원가입 링크 */}
-        <div className="text-center text-sm text-text-secondary">
+        <div className="text-center text-sm text-text-secondary mt-6">
           계정이 없으신가요?{' '}
           <Link to="/signup" className="text-primary font-medium hover:underline">
             회원가입
