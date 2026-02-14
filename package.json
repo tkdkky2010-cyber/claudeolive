@@ -5,9 +5,9 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "crawl": "node src/crawler/oliveyoung.js",
+    "start": "node --env-file=.env src/server.js",
+    "dev": "node --env-file=.env --watch src/server.js",
+    "crawl": "node src/crawler/oliveyoung-multi.js",
     "init-db": "node src/db/init.js",
     "migrate": "node src/db/migrations/001_add_email_auth.js"
   },
@@ -20,6 +20,7 @@
   "license": "MIT",
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",
+    "apify-client": "^2.22.1",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.5",

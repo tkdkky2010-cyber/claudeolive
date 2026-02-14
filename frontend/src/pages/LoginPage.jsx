@@ -9,7 +9,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { session, isAuthenticated } = useAuth();
+  const { session, isAuthenticated, signInWithPassword, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   // 이미 로그인된 경우 홈으로 리다이렉트
@@ -26,10 +26,7 @@ export default function LoginPage() {
     setError('');
     setIsLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { error } = await signInWithPassword(email, password);
 
     if (error) {
       if (error.message === 'Invalid login credentials') {
@@ -48,17 +45,8 @@ export default function LoginPage() {
   
   const handleGoogleLogin = async () => {
     setError('');
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin, // Redirect back to the app after login
-      },
-    });
-
-    if (error) {
-      setError('Google 로그인에 실패했습니다. 다시 시도해주세요.');
-      console.error('Google login error:', error);
-    }
+    await signInWithGoogle();
+    // The AuthProvider will handle navigation on successful login.
   };
 
   return (

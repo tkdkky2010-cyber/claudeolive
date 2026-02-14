@@ -157,4 +157,35 @@ router.post('/login', authRateLimiter, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/auth/google
+ * Redirect to Google for authentication
+ */
+router.get('/google', async (req, res) => {
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: `http://localhost:3001/api/auth/google/callback`,
+    },
+  });
+
+  if (error) {
+    console.error('Google OAuth 시작 에러:', error);
+    return res.redirect('/login?error=google_oauth_failed');
+  }
+
+  res.redirect(data.url); // Redirect to Google's auth page
+});
+
+/**
+ * GET /api/auth/google/callback
+ * Handle the callback from Google OAuth
+ */
+router.get('/google/callback', async (req, res) => {
+  // With server-side auth, Supabase handles the session from the code.
+  // The user is then redirected back to the frontend.
+  // The Supabase client on the frontend will detect the session.
+  res.redirect('http://localhost:5174');
+});
+
 export default router;

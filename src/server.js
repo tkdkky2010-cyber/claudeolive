@@ -1,6 +1,9 @@
+// Load environment variables FIRST before any other imports
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import cron from 'node-cron';
 import helmet from 'helmet';
 import { initializeDatabase } from './db/database.js';
@@ -15,8 +18,6 @@ import cartRouter from './routes/cart.js';
 import adminAuthRouter from './routes/admin-auth.js';
 import sellerRouter from './routes/seller.js';
 
-// Load environment variables
-dotenv.config();
 
 // Configuration
 const PORT = process.env.PORT || 3001;
@@ -42,9 +43,24 @@ app.use(helmet({
   xssFilter: true // Enable XSS filter
 }));
 
-// CORS middleware
+// CORS middleware - Allow all localhost ports in development
 app.use(cors({
-  origin: FRONTEND_URL,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+
+    // Allow all localhost origins in development
+    if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      return callback(null, true);
+    }
+
+    // In production, check against FRONTEND_URL
+    if (origin === FRONTEND_URL) {
+      return callback(null, true);
+    }
+
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
 

@@ -13,7 +13,7 @@ export default function SignupPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, signUp, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -32,13 +32,9 @@ export default function SignupPage() {
     setMessage('');
     setIsLoading(true);
 
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: name || '',
-        },
+    const { data, error } = await signUp(email, password, {
+      data: {
+        full_name: name || '',
       },
     });
 
@@ -63,15 +59,8 @@ export default function SignupPage() {
   
   const handleGoogleSignup = async () => {
     setError('');
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-      },
-    });
-    if (error) {
-      setError('Google 회원가입에 실패했습니다. 다시 시도해주세요.');
-    }
+    await signInWithGoogle();
+    // The AuthProvider will handle navigation on successful login.
   };
   
   return (

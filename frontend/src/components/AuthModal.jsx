@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function AuthModal({ onClose }) {
-  const { login, loginWithEmail, signup } = useAuth();
+  const { signInWithPassword, signUp, signInWithGoogle } = useAuth();
   const modalRef = useRef(null);
   const [mode, setMode] = useState('login'); // 'login' or 'signup'
   const [email, setEmail] = useState('');
@@ -11,7 +11,6 @@ export default function AuthModal({ onClose }) {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [googleInitialized, setGoogleInitialized] = useState(false);
 
   useEffect(() => {
     // ESC 키로 닫기
@@ -25,48 +24,7 @@ export default function AuthModal({ onClose }) {
     return () => document.removeEventListener('keydown', handleEscape);
   }, [onClose]);
 
-  useEffect(() => {
-    // Google Identity Services 초기화 (이미 로드된 스크립트 사용)
-    const initGoogle = () => {
-      if (window.google && !googleInitialized) {
-        try {
-          window.google.accounts.id.initialize({
-            client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-            callback: handleGoogleResponse,
-          });
 
-          const buttonDiv = document.getElementById('google-signin-button-modal');
-          if (buttonDiv) {
-            window.google.accounts.id.renderButton(buttonDiv, {
-              theme: 'outline',
-              size: 'large',
-              width: buttonDiv.offsetWidth || 350,
-              text: 'continue_with',
-              locale: 'ko',
-            });
-            setGoogleInitialized(true);
-          }
-        } catch (err) {
-          console.error('Google Sign-In 초기화 오류:', err);
-        }
-      }
-    };
-
-    // 스크립트가 이미 로드되어 있으면 바로 초기화
-    if (window.google) {
-      initGoogle();
-    } else {
-      // 스크립트 로드 대기
-      const checkGoogle = setInterval(() => {
-        if (window.google) {
-          clearInterval(checkGoogle);
-          initGoogle();
-        }
-      }, 100);
-
-      return () => clearInterval(checkGoogle);
-    }
-  }, [googleInitialized]);
 
   const handleGoogleResponse = async (response) => {
     const result = await login(response.credential);
@@ -84,14 +42,14 @@ export default function AuthModal({ onClose }) {
 
     let result;
     if (mode === 'login') {
-      result = await loginWithEmail(email, password);
+      result = await signInWithPassword(email, password);
     } else {
       if (password !== passwordConfirm) {
         setError('비밀번호가 일치하지 않습니다');
         setIsLoading(false);
         return;
       }
-      result = await signup(email, password, passwordConfirm, name || null);
+      result = await signUp(email, password, { data: { full_name: name || '' } });
     }
 
     if (result.success) {
@@ -149,10 +107,7 @@ export default function AuthModal({ onClose }) {
           </p>
         </div>
 
-        {/* Google 로그인 버튼 */}
-        <div className="mb-6">
-          <div id="google-signin-button-modal" className="flex justify-center"></div>
-        </div>
+
 
         {/* 구분선 */}
         <div className="relative mb-6">

@@ -61,12 +61,12 @@ export default function Header() {
                 <div className="flex items-center gap-2 sm:gap-3">
                   <div className="flex items-center gap-2">
                     <img
-                      src={user?.avatarUrl || user?.avatar_url || 'https://via.placeholder.com/32'}
-                      alt={user?.name}
+                      src={user?.user_metadata?.avatar_url || 'https://via.placeholder.com/32'}
+                      alt={user?.user_metadata?.name || user?.email}
                       className="w-8 h-8 rounded-full border border-border"
                     />
                     <span className="hidden sm:inline text-sm font-medium text-text">
-                      {user?.name || user?.email}
+                      {user?.user_metadata?.name || user?.email}
                     </span>
                   </div>
                   <button

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import apiClient from '../api/client';
+import api from '../api/api';
 import { useAuth } from './AuthContext';
 
 const CartContext = createContext(null);
@@ -19,7 +19,7 @@ export function CartProvider({ children }) {
 
     setIsLoading(true);
     try {
-      const response = await apiClient.get('/cart');
+      const response = await api.get('/cart');
       setCartItems(response.data.items || []);
     } catch (error) {
       console.error('장바구니 로드 실패:', error);
@@ -41,7 +41,7 @@ export function CartProvider({ children }) {
     }
 
     try {
-      const response = await apiClient.post('/cart', { productId, quantity });
+      const response = await api.post('/cart', { productId, quantity });
       await loadCart(); // 장바구니 새로고침
       return { success: true, data: response.data };
     } catch (error) {
@@ -64,7 +64,7 @@ export function CartProvider({ children }) {
     }
 
     try {
-      await apiClient.patch(`/cart/${cartItemId}`, { quantity });
+      await api.patch(`/cart/${cartItemId}`, { quantity });
       await loadCart();
       return { success: true };
     } catch (error) {
@@ -83,7 +83,7 @@ export function CartProvider({ children }) {
     }
 
     try {
-      await apiClient.delete(`/cart/${cartItemId}`);
+      await api.delete(`/cart/${cartItemId}`);
       await loadCart();
       return { success: true };
     } catch (error) {
@@ -100,7 +100,7 @@ export function CartProvider({ children }) {
   const subtotal = cartItems.reduce((sum, item) => sum + (item.product.salePrice * item.quantity), 0);
   const vat = Math.floor(subtotal * 0.1);
   const total = subtotal + vat;
-
+  
   const value = {
     cartItems,
     isCartOpen,

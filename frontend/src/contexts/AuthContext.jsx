@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../api/client';
+import api from '../api/api'; // Import the configured axios instance
 
 const AuthContext = createContext(null);
 
@@ -36,6 +37,37 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     await supabase.auth.signOut();
   };
+
+  const signInWithGoogle = async () => {
+    // Redirect to backend endpoint for Google OAuth
+    window.location.href = 'http://localhost:3001/api/auth/google';
+  };
+
+  const signUp = async (email, password, options) => {
+    try {
+      const response = await api.post('http://localhost:3001/api/auth/signup', { email, password, passwordConfirm: password, name: options?.data?.full_name });
+      return { data: response.data, error: null };
+    } catch (error) {
+      console.error('Error signing up:', error.response?.data || error.message);
+      if (error.isAxiosError) {
+        console.error('Axios error details:', error.toJSON());
+      }
+      return { data: null, error: error.response?.data || error };
+    }
+  };
+
+  const signInWithPassword = async (email, password) => {
+    try {
+      const { data } = await api.post('http://localhost:3001/api/auth/login', { email, password });
+      return { data, error: null };
+    } catch (error) {
+      console.error('Error signing in:', error.response?.data || error.message);
+      if (error.isAxiosError) {
+        console.error('Axios error details:', error.toJSON());
+      }
+      return { data: null, error: error.response?.data || error };
+    }
+  };
   
   const value = {
     session,
@@ -43,6 +75,9 @@ export function AuthProvider({ children }) {
     isLoading,
     isAuthenticated: !!user,
     logout,
+    signInWithGoogle,
+    signUp,
+    signInWithPassword,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

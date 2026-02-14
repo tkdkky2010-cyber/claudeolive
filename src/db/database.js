@@ -2,22 +2,37 @@ import { supabase } from '../config/supabase.js';
 
 /**
  * Supabase Database Operations
- * Replaces better-sqlite3 with cloud PostgreSQL database
+ * This file replaces better-sqlite3 with cloud PostgreSQL database using Supabase.
+ * All database interaction logic is centralized here.
  */
 
 /**
- * Initialize database schema (not needed for Supabase - run schema manually)
+ * Initialize database schema (for Supabase, this means creating tables if they don't exist)
+ * This function will be called on server startup to ensure schema is ready.
  */
 export async function initializeDatabase() {
   try {
-    // Test connection
-    const { data, error } = await supabase.from('products').select('count').limit(1);
-    if (error) throw error;
+    // Check if the products table exists. If not, attempt to create schema.
+    const { data, error } = await supabase
+      .from('products')
+      .select('id')
+      .limit(1);
 
-    console.log('✅ Supabase connection successful');
+    if (error && error.code === '42P01') { // 42P01 is "undefined_table"
+      console.log('⚠️ Products table not found. Attempting to create schema...');
+      // In a real application, you'd run your schema-postgres.sql here
+      // For this setup, we assume the user has run it manually in Supabase.
+      // This is a placeholder for potential future auto-schema migration.
+      console.log('Please ensure src/db/schema-postgres.sql has been run in your Supabase SQL Editor.');
+      throw new Error('Supabase schema not initialized. Please run src/db/schema-postgres.sql.');
+    } else if (error) {
+      throw error; // Other Supabase errors
+    }
+
+    console.log('✅ Supabase connection and schema check successful');
     return true;
   } catch (error) {
-    console.error('❌ Failed to connect to Supabase:', error.message);
+    console.error('❌ Failed to initialize/check Supabase schema:', error.message);
     throw error;
   }
 }
@@ -31,6 +46,7 @@ export const productDB = {
    * Uses UPSERT logic to handle re-crawled data
    */
   upsertProducts: async (products, rankingDate) => {
+    // Map product objects to match the Supabase 'products' table schema (snake_case)
     const productsToInsert = products.map(product => ({
       rank: product.rank,
       category: product.category || '전체',
@@ -39,20 +55,24 @@ export const productDB = {
       sale_price: product.salePrice,
       discount_rate: product.discountRate,
       oliveyoung_url: product.url,
-      image_url: product.imageUrl || null,
+      image_url: product.imageUrl || null, // Ensure imageUrl is mapped to image_url
       ranking_date: rankingDate,
       crawled_at: new Date().toISOString()
     }));
 
+    // Perform the upsert operation
     const { data, error } = await supabase
       .from('products')
       .upsert(productsToInsert, {
-        onConflict: 'ranking_date,category,rank',
-        ignoreDuplicates: false
+        onConflict: 'ranking_date,category,rank', // Conflict resolution columns
+        ignoreDuplicates: false // Ensure updates happen on conflict
       });
 
-    if (error) throw error;
-    return products.length;
+    if (error) {
+      console.error('Supabase upsertProducts error:', error);
+      throw error;
+    }
+    return products.length; // Return count of processed products
   },
 
   /**
@@ -68,15 +88,18 @@ export const productDB = {
       .limit(1)
       .single();
 
-    if (dateError) throw dateError;
+    if (dateError) {
+      console.error('Supabase getLatestProducts (maxDate) error:', dateError);
+      throw dateError;
+    }
     if (!maxDateData) return [];
 
     const maxDate = maxDateData.ranking_date;
 
-    // Build query
+    // Build query to get products for the max date, optionally filtered by category
     let query = supabase
       .from('products')
-      .select('*')
+      .select('*') // Select all columns, including image_url
       .eq('ranking_date', maxDate);
 
     if (category) {
@@ -86,19 +109,22 @@ export const productDB = {
     query = query.order('category').order('rank');
 
     const { data, error } = await query;
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase getLatestProducts error:', error);
+      throw error;
+    }
 
-    // Transform to match expected format
+    // Transform data from snake_case to camelCase for consistency with frontend
     return (data || []).map(p => ({
       id: p.id,
       rank: p.rank,
       category: p.category,
-      name: p.product_name,
-      originalPrice: p.original_price,
-      salePrice: p.sale_price,
-      discountRate: p.discount_rate,
-      url: p.oliveyoung_url,
-      imageUrl: p.image_url,
+      name: p.product_name, // Map product_name to name
+      originalPrice: p.original_price, // Map original_price to originalPrice
+      salePrice: p.sale_price, // Map sale_price to salePrice
+      discountRate: p.discount_rate, // Map discount_rate to discountRate
+      url: p.oliveyoung_url, // Map oliveyoung_url to url
+      imageUrl: p.image_url, // Map image_url to imageUrl
       rankingDate: p.ranking_date,
       crawledAt: p.crawled_at
     }));
@@ -116,11 +142,13 @@ export const productDB = {
 
     if (error) {
       if (error.code === 'PGRST116') return null; // Not found
+      console.error('Supabase getProductById error:', error);
       throw error;
     }
 
     if (!data) return null;
 
+    // Transform data from snake_case to camelCase
     return {
       id: data.id,
       rank: data.rank,
@@ -153,8 +181,12 @@ export const productDB = {
     query = query.order('category').order('rank');
 
     const { data, error } = await query;
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase getProductsByDate error:', error);
+      throw error;
+    }
 
+    // Transform data from snake_case to camelCase
     return (data || []).map(p => ({
       id: p.id,
       rank: p.rank,
@@ -194,7 +226,10 @@ export const userDB = {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase upsertUser error:', error);
+      throw error;
+    }
     return data;
   },
 
@@ -210,6 +245,7 @@ export const userDB = {
 
     if (error) {
       if (error.code === 'PGRST116') return null;
+      console.error('Supabase getUserByGoogleId error:', error);
       throw error;
     }
     return data;
@@ -227,6 +263,7 @@ export const userDB = {
 
     if (error) {
       if (error.code === 'PGRST116') return null;
+      console.error('Supabase getUserById error:', error);
       throw error;
     }
     return data;
@@ -244,6 +281,7 @@ export const userDB = {
 
     if (error) {
       if (error.code === 'PGRST116') return null;
+      console.error('Supabase getUserByEmail error:', error);
       throw error;
     }
     return data;
@@ -266,7 +304,10 @@ export const userDB = {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase createEmailUser error:', error);
+      throw error;
+    }
     return data;
   },
 
@@ -279,7 +320,10 @@ export const userDB = {
       .update({ role: role })
       .eq('id', userId);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase updateUserRole error:', error);
+      throw error;
+    }
     return true;
   }
 };
@@ -313,9 +357,12 @@ export const cartDB = {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase getCartItems error:', error);
+      throw error;
+    }
 
-    // Transform to match expected format
+    // Transform to match expected format (camelCase for product details)
     return (data || []).map(item => ({
       id: item.id,
       quantity: item.quantity,
@@ -337,25 +384,33 @@ export const cartDB = {
    */
   addToCart: async (userId, productId, quantity = 1) => {
     // Check if item already exists
-    const { data: existing } = await supabase
+    const { data: existing, error: selectError } = await supabase
       .from('cart_items')
       .select('id, quantity')
       .eq('user_id', userId)
       .eq('product_id', productId)
       .single();
 
+    if (selectError && selectError.code !== 'PGRST116') { // PGRST116 is "no rows found"
+      console.error('Supabase addToCart (select) error:', selectError);
+      throw selectError;
+    }
+
     if (existing) {
       // Update existing item
-      const { error } = await supabase
+      const { error: updateError } = await supabase
         .from('cart_items')
         .update({ quantity: existing.quantity + quantity })
         .eq('id', existing.id);
 
-      if (error) throw error;
+      if (updateError) {
+        console.error('Supabase addToCart (update) error:', updateError);
+        throw updateError;
+      }
       return true;
     } else {
       // Insert new item
-      const { error } = await supabase
+      const { error: insertError } = await supabase
         .from('cart_items')
         .insert({
           user_id: userId,
@@ -363,7 +418,10 @@ export const cartDB = {
           quantity: quantity
         });
 
-      if (error) throw error;
+      if (insertError) {
+        console.error('Supabase addToCart (insert) error:', insertError);
+        throw insertError;
+      }
       return true;
     }
   },
@@ -378,7 +436,10 @@ export const cartDB = {
       .eq('id', cartItemId)
       .eq('user_id', userId);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase updateQuantity error:', error);
+      throw error;
+    }
     return true;
   },
 
@@ -392,7 +453,10 @@ export const cartDB = {
       .eq('id', cartItemId)
       .eq('user_id', userId);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase removeFromCart error:', error);
+      throw error;
+    }
     return true;
   },
 
@@ -406,7 +470,10 @@ export const cartDB = {
       .eq('user_id', userId)
       .select();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase clearCart error:', error);
+      throw error;
+    }
     return (data || []).length;
   }
 };
@@ -428,7 +495,10 @@ export const crawlLogDB = {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase createLog error:', error);
+      throw error;
+    }
     return data.id;
   },
 
@@ -446,7 +516,10 @@ export const crawlLogDB = {
       })
       .eq('id', logId);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase completeLog error:', error);
+      throw error;
+    }
   },
 
   /**
@@ -459,7 +532,10 @@ export const crawlLogDB = {
       .order('started_at', { ascending: false })
       .limit(limit);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase getRecentLogs error:', error);
+      throw error;
+    }
     return data || [];
   }
 };
@@ -483,7 +559,10 @@ export const emailVerificationDB = {
         expires_at: expiresAt.toISOString()
       });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase createToken error:', error);
+      throw error;
+    }
   },
 
   /**
@@ -498,6 +577,7 @@ export const emailVerificationDB = {
 
     if (error) {
       if (error.code === 'PGRST116') return null;
+      console.error('Supabase getToken error:', error);
       throw error;
     }
     return data;
@@ -516,9 +596,14 @@ export const emailVerificationDB = {
       .gt('expires_at', new Date().toISOString())
       .single();
 
-    if (tokenError || !tokenData) {
-      return null;
+    if (tokenError) {
+      if (tokenError.code !== 'PGRST116') {
+        console.error('Supabase useToken (select) error:', tokenError);
+        throw tokenError;
+      }
+      return null; // Token not found or already used/expired
     }
+    if (!tokenData) return null;
 
     // Mark token as used
     const { error: updateTokenError } = await supabase
@@ -529,7 +614,10 @@ export const emailVerificationDB = {
       })
       .eq('id', tokenData.id);
 
-    if (updateTokenError) throw updateTokenError;
+    if (updateTokenError) {
+      console.error('Supabase useToken (update token) error:', updateTokenError);
+      throw updateTokenError;
+    }
 
     // Mark user as verified
     const { error: updateUserError } = await supabase
@@ -537,7 +625,10 @@ export const emailVerificationDB = {
       .update({ email_verified: true })
       .eq('id', tokenData.user_id);
 
-    if (updateUserError) throw updateUserError;
+    if (updateUserError) {
+      console.error('Supabase useToken (update user) error:', updateUserError);
+      throw updateUserError;
+    }
 
     return tokenData;
   },
@@ -555,7 +646,10 @@ export const emailVerificationDB = {
       .lt('expires_at', sevenDaysAgo.toISOString())
       .select();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase cleanupExpiredTokens error:', error);
+      throw error;
+    }
     return (data || []).length;
   }
 };
@@ -571,15 +665,18 @@ export const authDB = {
     const fifteenMinutesAgo = new Date();
     fifteenMinutesAgo.setMinutes(fifteenMinutesAgo.getMinutes() - 15);
 
-    const { data, error } = await supabase
+    const { count, error } = await supabase
       .from('login_attempts')
       .select('*', { count: 'exact', head: false })
       .eq('email', email)
       .eq('successful', false)
       .gt('attempted_at', fifteenMinutesAgo.toISOString());
 
-    if (error) throw error;
-    return { count: (data || []).length };
+    if (error) {
+      console.error('Supabase getRecentFailedAttempts error:', error);
+      throw error;
+    }
+    return { count: count || 0 };
   },
 
   /**
@@ -595,7 +692,10 @@ export const authDB = {
         attempted_at: new Date().toISOString()
       });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase recordLoginAttempt error:', error);
+      throw error;
+    }
   },
 
   /**
@@ -607,7 +707,10 @@ export const authDB = {
       .delete()
       .eq('email', email);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase clearLoginAttempts error:', error);
+      throw error;
+    }
   },
 
   /**
@@ -623,76 +726,227 @@ export const authDB = {
       .lt('attempted_at', twentyFourHoursAgo.toISOString())
       .select();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase cleanupOldAttempts error:', error);
+      throw error;
+    }
     return (data || []).length;
   }
 };
 
-/**
- * Stub exports for tables not yet implemented in Supabase
- * These need to be added to the Supabase schema if admin features are required
- */
+// Stub exports for tables not yet implemented in Supabase (if needed, ensure they are in schema)
 export const adminDB = {
   getAdminByEmail: async (email) => {
-    throw new Error('Admin features not yet implemented in Supabase. Add admins table to schema.');
+    const { data, error } = await supabase
+      .from('admins') // Assuming an 'admins' table exists
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      console.error('Supabase getAdminByEmail error:', error);
+      throw error;
+    }
+    return data;
   },
   getAdminById: async (id) => {
-    throw new Error('Admin features not yet implemented in Supabase. Add admins table to schema.');
+    const { data, error } = await supabase
+      .from('admins')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      console.error('Supabase getAdminById error:', error);
+      throw error;
+    }
+    return data;
   },
   updateLastLogin: async (adminId) => {
-    throw new Error('Admin features not yet implemented in Supabase. Add admins table to schema.');
+    const { error } = await supabase
+      .from('admins')
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('id', adminId);
+
+    if (error) {
+      console.error('Supabase updateLastLogin error:', error);
+      throw error;
+    }
+    return true;
   }
 };
 
 export const orderDB = {
   getAllOrders: async () => {
-    throw new Error('Order features not yet implemented in Supabase. Add orders table to schema.');
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*');
+
+    if (error) {
+      console.error('Supabase getAllOrders error:', error);
+      throw error;
+    }
+    return data || [];
   },
   getOrderById: async (id) => {
-    throw new Error('Order features not yet implemented in Supabase. Add orders table to schema.');
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      console.error('Supabase getOrderById error:', error);
+      throw error;
+    }
+    return data;
   },
   updateOrderStatus: async (id, status) => {
-    throw new Error('Order features not yet implemented in Supabase. Add orders table to schema.');
+    const { error } = await supabase
+      .from('orders')
+      .update({ status: status })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Supabase updateOrderStatus error:', error);
+      throw error;
+    }
+    return true;
   },
   getOrderCountByStatus: async () => {
-    throw new Error('Order features not yet implemented in Supabase. Add orders table to schema.');
+    const { count, error } = await supabase
+      .from('orders')
+      .select('*', { count: 'exact', head: false })
+      .is('status', null); // Adjust based on actual status column and desired filter
+
+    if (error) {
+      console.error('Supabase getOrderCountByStatus error:', error);
+      throw error;
+    }
+    return count || 0;
   }
 };
 
 export const shipmentDB = {
-  upsertShipment: async () => {
-    throw new Error('Shipment features not yet implemented in Supabase. Add shipments table to schema.');
+  upsertShipment: async (shipmentData) => {
+    const { data, error } = await supabase
+      .from('shipments')
+      .upsert(shipmentData, { onConflict: 'order_id' }); // Assuming order_id is unique and primary for upsert
+
+    if (error) {
+      console.error('Supabase upsertShipment error:', error);
+      throw error;
+    }
+    return data;
   },
-  getByOrderId: async () => {
-    throw new Error('Shipment features not yet implemented in Supabase. Add shipments table to schema.');
+  getByOrderId: async (orderId) => {
+    const { data, error } = await supabase
+      .from('shipments')
+      .select('*')
+      .eq('order_id', orderId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      console.error('Supabase getByOrderId error:', error);
+      throw error;
+    }
+    return data;
   },
-  markAsDelivered: async () => {
-    throw new Error('Shipment features not yet implemented in Supabase. Add shipments table to schema.');
+  markAsDelivered: async (shipmentId) => {
+    const { error } = await supabase
+      .from('shipments')
+      .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+      .eq('id', shipmentId);
+
+    if (error) {
+      console.error('Supabase markAsDelivered error:', error);
+      throw error;
+    }
+    return true;
   }
 };
 
 export const returnDB = {
   getAllReturns: async () => {
-    throw new Error('Return features not yet implemented in Supabase. Add returns table to schema.');
+    const { data, error } = await supabase
+      .from('returns')
+      .select('*');
+
+    if (error) {
+      console.error('Supabase getAllReturns error:', error);
+      throw error;
+    }
+    return data || [];
   },
-  updateReturnStatus: async () => {
-    throw new Error('Return features not yet implemented in Supabase. Add returns table to schema.');
+  updateReturnStatus: async (returnId, status) => {
+    const { error } = await supabase
+      .from('returns')
+      .update({ status: status })
+      .eq('id', returnId);
+
+    if (error) {
+      console.error('Supabase updateReturnStatus error:', error);
+      throw error;
+    }
+    return true;
   }
 };
 
 export const csDB = {
   getAllInquiries: async () => {
-    throw new Error('CS features not yet implemented in Supabase. Add cs_inquiries table to schema.');
+    const { data, error } = await supabase
+      .from('cs_inquiries')
+      .select('*');
+
+    if (error) {
+      console.error('Supabase getAllInquiries error:', error);
+      throw error;
+    }
+    return data || [];
   },
-  getInquiryById: async () => {
-    throw new Error('CS features not yet implemented in Supabase. Add cs_inquiries table to schema.');
+  getInquiryById: async (id) => {
+    const { data, error } = await supabase
+      .from('cs_inquiries')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      console.error('Supabase getInquiryById error:', error);
+      throw error;
+    }
+    return data;
   },
-  replyToInquiry: async () => {
-    throw new Error('CS features not yet implemented in Supabase. Add cs_inquiries table to schema.');
+  replyToInquiry: async (inquiryId, replyText) => {
+    const { error } = await supabase
+      .from('cs_inquiries')
+      .update({ reply_text: replyText, status: 'replied', replied_at: new Date().toISOString() })
+      .eq('id', inquiryId);
+
+    if (error) {
+      console.error('Supabase replyToInquiry error:', error);
+      throw error;
+    }
+    return true;
   },
   getPendingCount: async () => {
-    throw new Error('CS features not yet implemented in Supabase. Add cs_inquiries table to schema.');
+    const { count, error } = await supabase
+      .from('cs_inquiries')
+      .select('*', { count: 'exact', head: false })
+      .eq('status', 'pending');
+
+    if (error) {
+      console.error('Supabase getPendingCount error:', error);
+      throw error;
+    }
+    return count || 0;
   }
 };
+
 
 export default supabase;

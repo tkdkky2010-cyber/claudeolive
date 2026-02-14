@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import apiClient from '../api/client';
+import api from '../api/api';
 import ProductCard from './ProductCard';
 
 export default function ProductGrid({ category = '전체' }) {
@@ -13,8 +13,7 @@ export default function ProductGrid({ category = '전체' }) {
 
     try {
       // Always send category parameter
-      const url = `/products?category=${encodeURIComponent(category)}`;
-      const response = await apiClient.get(url);
+      const response = await api.get(`/products?category=${encodeURIComponent(category)}`);
       console.log(`${category} 카테고리 API 응답:`, response.data);
 
       // API 응답 구조: { success: true, data: { products: [...] } }
