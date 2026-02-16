@@ -57,7 +57,6 @@ export function CartProvider({ children }) {
       const response = await api.post(`/cart`, { productId, quantity });
       console.log('✅ [CartContext] Cart API response:', response.data);
       await loadCart(); // 장바구니 새로고침
-      setIsCartOpen(true); // 장바구니 자동으로 열기
       return { success: true, data: response.data };
     } catch (error) {
       console.error('❌ [CartContext] 장바구니 추가 실패:', error);

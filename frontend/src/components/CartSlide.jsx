@@ -16,7 +16,6 @@ export default function CartSlide() {
   } = useCart();
 
   const slideRef = useRef(null);
-  const itemsContainerRef = useRef(null);
 
   useEffect(() => {
     const handleEscape = (e) => {
@@ -39,13 +38,6 @@ export default function CartSlide() {
       document.body.style.overflow = 'unset';
     };
   }, [isCartOpen]);
-
-  // 장바구니 아이템이 변경될 때마다 스크롤을 최상단으로 이동
-  useEffect(() => {
-    if (isCartOpen && itemsContainerRef.current && cartItems.length > 0) {
-      itemsContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  }, [cartItems.length, isCartOpen]);
 
   const handleOverlayClick = (e) => {
     if (e.target === e.currentTarget) {
@@ -89,7 +81,7 @@ export default function CartSlide() {
         </div>
 
         {/* 장바구니 아이템 */}
-        <div ref={itemsContainerRef} className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-4">
           {isLoading ? (
             <div className="flex justify-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-4 border-primary border-t-transparent"></div>
