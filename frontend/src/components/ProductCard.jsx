@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
+import { useToast } from '../contexts/ToastContext';
 
 export default function ProductCard({ product }) {
   const { isAuthenticated } = useAuth();
   const { addToCart } = useCart();
+  const { showToast } = useToast();
   const [isAdding, setIsAdding] = useState(false);
-  const [showToast, setShowToast] = useState(null);
 
   const getRankBadgeStyle = (rank) => {
     if (rank === 1) {
@@ -23,7 +24,7 @@ export default function ProductCard({ product }) {
 
   const handleAddToCart = async () => {
     if (!isAuthenticated) {
-      alert('로그인이 필요합니다');
+      showToast('로그인이 필요합니다', 'error');
       return;
     }
 
@@ -32,9 +33,9 @@ export default function ProductCard({ product }) {
     setIsAdding(false);
 
     if (result.success) {
-      setShowToast({ message: '장바구니에 추가되었습니다', type: 'success' });
+      showToast('장바구니에 추가되었습니다', 'success');
     } else {
-      setShowToast({ message: result.error || '추가 실패', type: 'error' });
+      showToast(result.error || '추가 실패', 'error');
     }
   };
 
@@ -118,15 +119,6 @@ export default function ProductCard({ product }) {
           </a>
         </div>
       </div>
-
-      {/* Toast */}
-      {showToast && (
-        <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 z-50">
-          <div className={`${showToast.type === 'success' ? 'bg-primary' : 'bg-error'} text-white px-6 py-3 rounded-lg shadow-lg`}>
-            {showToast.message}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

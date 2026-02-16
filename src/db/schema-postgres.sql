@@ -28,6 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_products_rank ON products(rank);
 -- Users Table
 CREATE TABLE IF NOT EXISTS users (
   id BIGSERIAL PRIMARY KEY,
+  supabase_id UUID UNIQUE, -- Linked to auth.users in Supabase
   google_id TEXT UNIQUE,
   email TEXT NOT NULL,
   name TEXT,
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- Indexes for users
+CREATE INDEX IF NOT EXISTS idx_users_supabase_id ON users(supabase_id);
 CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
@@ -113,24 +115,50 @@ USING (true);
 -- RLS Policies for users (users can view their own data)
 CREATE POLICY "Users can view own profile"
 ON users FOR SELECT
-USING (auth.uid()::text = id::text);
+USING (auth.uid() = supabase_id);
+
+-- Allow backend (service role) to insert/update users during signup/login
+CREATE POLICY "Service role can insert users"
+ON users FOR INSERT
+WITH CHECK (true);
+
+CREATE POLICY "Service role can update users"
+ON users FOR UPDATE
+USING (true);
 
 -- RLS Policies for cart_items (users can only access their own cart)
 CREATE POLICY "Users can view own cart"
 ON cart_items FOR SELECT
-USING (auth.uid()::text = user_id::text);
+USING (EXISTS (
+  SELECT 1 FROM users WHERE users.id = cart_items.user_id AND users.supabase_id = auth.uid()
+));
 
 CREATE POLICY "Users can insert into own cart"
 ON cart_items FOR INSERT
-WITH CHECK (auth.uid()::text = user_id::text);
+WITH CHECK (EXISTS (
+  SELECT 1 FROM users WHERE users.id = cart_items.user_id AND users.supabase_id = auth.uid()
+));
 
 CREATE POLICY "Users can update own cart"
 ON cart_items FOR UPDATE
-USING (auth.uid()::text = user_id::text);
+USING (EXISTS (
+  SELECT 1 FROM users WHERE users.id = cart_items.user_id AND users.supabase_id = auth.uid()
+));
 
 CREATE POLICY "Users can delete from own cart"
 ON cart_items FOR DELETE
-USING (auth.uid()::text = user_id::text);
+USING (EXISTS (
+  SELECT 1 FROM users WHERE users.id = cart_items.user_id AND users.supabase_id = auth.uid()
+));
+
+-- Allow backend to manage crawl logs
+CREATE POLICY "Service role can insert crawl logs"
+ON crawl_logs FOR INSERT
+WITH CHECK (true);
+
+CREATE POLICY "Service role can update crawl logs"
+ON crawl_logs FOR UPDATE
+USING (true);
 
 -- Service role can do everything (for backend operations)
 -- Note: These policies will be bypassed when using service_role key

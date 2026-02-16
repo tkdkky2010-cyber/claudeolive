@@ -8,23 +8,37 @@ export default function ProductGrid({ category = '전체' }) {
   const [error, setError] = useState(null);
 
   const loadProducts = async () => {
+    console.log(`🔄 [ProductGrid] 상품 로딩 시작 - 카테고리: ${category}`);
     setIsLoading(true);
     setError(null);
 
     try {
-      // Always send category parameter
-      const response = await api.get(`/products?category=${encodeURIComponent(category)}`);
-      console.log(`${category} 카테고리 API 응답:`, response.data);
+      const url = `/products?category=${encodeURIComponent(category)}`;
+      console.log(`📡 [ProductGrid] API 요청: ${url}`);
+
+      const response = await api.get(url);
+      console.log(`✅ [ProductGrid] API 응답 성공:`, response.data);
 
       // API 응답 구조: { success: true, data: { products: [...] } }
       const productList = response.data.data?.products || response.data.products || [];
-      console.log(`${category} 상품 목록:`, productList.length, '개');
+      console.log(`📦 [ProductGrid] 상품 목록: ${productList.length}개`);
+
+      if (productList.length === 0) {
+        console.warn(`⚠️ [ProductGrid] ${category} 카테고리에 상품이 없습니다`);
+      }
+
       setProducts(productList);
     } catch (err) {
-      console.error('상품 로드 실패:', err);
+      console.error('❌ [ProductGrid] 상품 로드 실패:', err);
+      console.error('❌ [ProductGrid] 에러 상세:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status
+      });
       setError(`${category} 상품을 불러올 수 없습니다`);
     } finally {
       setIsLoading(false);
+      console.log(`✨ [ProductGrid] 로딩 완료`);
     }
   };
 

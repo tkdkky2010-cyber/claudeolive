@@ -210,17 +210,18 @@ export const userDB = {
   /**
    * Create or update user from Google OAuth
    */
-  upsertUser: async (googleId, email, name, avatarUrl) => {
+  upsertUser: async (supabaseId, email, name, avatarUrl) => {
     const { data, error } = await supabase
       .from('users')
       .upsert({
-        google_id: googleId,
+        supabase_id: supabaseId,
+        google_id: supabaseId, // For Google users, use same ID
         email: email,
         name: name,
         avatar_url: avatarUrl,
         auth_method: 'google'
       }, {
-        onConflict: 'google_id',
+        onConflict: 'supabase_id',
         ignoreDuplicates: false
       })
       .select()
@@ -252,18 +253,41 @@ export const userDB = {
   },
 
   /**
-   * Get user by ID
+   * Get user by ID (Internal Integer ID or Supabase UUID)
    */
   getUserById: async (id) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', id)
-      .single();
+    let query = supabase.from('users').select('*');
+
+    // Check if id is a UUID (Supabase string ID) or a BIGINT (our internal ID)
+    if (typeof id === 'string' && id.includes('-')) {
+      query = query.eq('supabase_id', id);
+    } else {
+      query = query.eq('id', id);
+    }
+
+    const { data, error } = await query.single();
 
     if (error) {
       if (error.code === 'PGRST116') return null;
       console.error('Supabase getUserById error:', error);
+      throw error;
+    }
+    return data;
+  },
+
+  /**
+   * Get user by Supabase UUID
+   */
+  getUserBySupabaseId: async (supabaseId) => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('supabase_id', supabaseId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      console.error('Supabase getUserBySupabaseId error:', error);
       throw error;
     }
     return data;
@@ -290,10 +314,11 @@ export const userDB = {
   /**
    * Create email user (for email-based signup)
    */
-  createEmailUser: async (email, passwordHash, name = null) => {
+  createEmailUser: async (email, passwordHash, name = null, supabaseId = null) => {
     const { data, error } = await supabase
       .from('users')
       .insert({
+        supabase_id: supabaseId,
         email: email,
         password_hash: passwordHash,
         name: name,
@@ -322,6 +347,22 @@ export const userDB = {
 
     if (error) {
       console.error('Supabase updateUserRole error:', error);
+      throw error;
+    }
+    return true;
+  },
+
+  /**
+   * Update email verification status
+   */
+  updateEmailVerification: async (userId, verified) => {
+    const { error } = await supabase
+      .from('users')
+      .update({ email_verified: verified })
+      .eq('id', userId);
+
+    if (error) {
+      console.error('Supabase updateEmailVerification error:', error);
       throw error;
     }
     return true;

@@ -32,29 +32,42 @@ export default function SignupPage() {
     setMessage('');
     setIsLoading(true);
 
-    const { data, error } = await signUp(email, password, {
-      data: {
-        full_name: name || '',
-      },
-    });
+    try {
+      const { data, error } = await signUp(email, password, {
+        data: {
+          full_name: name || '',
+        },
+      });
 
-    if (error) {
-      if (error.message.includes('User already registered')) {
-        setError('이미 사용 중인 이메일입니다.');
-      } else if (error.message.includes('Password should be at least 6 characters')) {
-        setError('비밀번호는 6자 이상이어야 합니다.');
+      console.log('Signup response:', { data, error });
+
+      if (error) {
+        // Backend returns errors in format: { success: false, error: 'message', details?: [...] }
+        console.log('Signup error:', error);
+
+        // Handle error with details array (like password validation errors)
+        if (error.details && Array.isArray(error.details)) {
+          const detailsText = error.details.join('\n');
+          setError(`${error.error || '회원가입 오류'}\n\n${detailsText}`);
+        } else {
+          const errorMessage = error.error || error.message || '회원가입에 실패했습니다. 다시 시도해주세요.';
+          setError(errorMessage);
+        }
+      } else if (data?.data?.requiresConfirmation) {
+        // This case means the user needs to confirm their email
+        console.log('Email confirmation required');
+        setMessage(data.message || '회원가입이 완료되었습니다! 이메일을 확인하여 인증을 완료해주세요.');
       } else {
-        setError('회원가입에 실패했습니다. 다시 시도해주세요.');
+        // This case (user & session) is for when email confirmation is disabled or auto-login after signup
+        console.log('Navigating to home page');
+        navigate('/');
       }
-    } else if (data.user && !data.session) {
-      // This case means the user needs to confirm their email
-      setMessage('회원가입이 완료되었습니다! 이메일을 확인하여 인증을 완료해주세요.');
-    } else {
-      // This case (user & session) is for when email confirmation is disabled
-      navigate('/');
+    } catch (err) {
+      console.error('Unexpected signup error:', err);
+      setError('예상치 못한 오류가 발생했습니다. 콘솔을 확인해주세요.');
+    } finally {
+      setIsLoading(false);
     }
-    
-    setIsLoading(false);
   };
   
   const handleGoogleSignup = async () => {
@@ -72,6 +85,21 @@ export default function SignupPage() {
             올리브영 랭킹 커머스 계정을 만드세요
           </p>
         </div>
+
+        {/* Loading state */}
+        {isLoading && (
+          <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg text-sm text-center mb-4">
+            <p>처리 중입니다... 잠시만 기다려주세요.</p>
+          </div>
+        )}
+
+        {/* Error state */}
+        {error && !isLoading && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-4">
+            <p className="font-semibold mb-2">오류 발생:</p>
+            <div className="whitespace-pre-line">{error}</div>
+          </div>
+        )}
 
         {message ? (
           <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg text-sm text-center">

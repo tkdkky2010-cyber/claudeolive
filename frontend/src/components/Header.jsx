@@ -59,16 +59,9 @@ export default function Header() {
               {/* 로그인/사용자 */}
               {isAuthenticated ? (
                 <div className="flex items-center gap-2 sm:gap-3">
-                  <div className="flex items-center gap-2">
-                    <img
-                      src={user?.user_metadata?.avatar_url || 'https://via.placeholder.com/32'}
-                      alt={user?.user_metadata?.name || user?.email}
-                      className="w-8 h-8 rounded-full border border-border"
-                    />
-                    <span className="hidden sm:inline text-sm font-medium text-text">
-                      {user?.user_metadata?.name || user?.email}
-                    </span>
-                  </div>
+                  <span className="text-sm font-medium text-text">
+                    {user?.user_metadata?.name || user?.email}
+                  </span>
                   <button
                     onClick={logout}
                     className="text-sm text-text-secondary hover:text-text transition-colors px-3 py-1.5 hover:bg-background rounded"

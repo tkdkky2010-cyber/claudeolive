@@ -29,13 +29,9 @@ export default function LoginPage() {
     const { error } = await signInWithPassword(email, password);
 
     if (error) {
-      if (error.message === 'Invalid login credentials') {
-        setError('이메일 또는 비밀번호가 올바르지 않습니다.');
-      } else if (error.message === 'Email not confirmed') {
-        setError('이메일 인증이 필요합니다. 받은 편지함을 확인하세요.');
-      } else {
-        setError('로그인에 실패했습니다. 다시 시도해주세요.');
-      }
+      // Backend returns errors in format: { success: false, error: 'message' }
+      const errorMessage = error.error || error.message || '로그인에 실패했습니다. 다시 시도해주세요.';
+      setError(errorMessage);
     } else {
       navigate('/'); // On success, AuthProvider will handle session and redirect
     }

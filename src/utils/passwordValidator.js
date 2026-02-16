@@ -29,14 +29,7 @@ const COMMON_PASSWORDS = [
  * Validate password strength and complexity
  *
  * Requirements:
- * - Minimum 12 characters
- * - Must include lowercase letter
- * - Must include uppercase letter
- * - Must include number
- * - Must include special character (@$!%*#?&)
- * - Cannot contain common passwords
- * - Cannot contain email or name
- * - Password strength score must be >= 3 (via zxcvbn)
+ * - Minimum 8 characters (any characters allowed)
  *
  * @param {string} password - The password to validate
  * @param {string} email - User's email (to prevent password containing email)
@@ -47,8 +40,8 @@ export function validatePassword(password, email = '', name = '') {
   const errors = [];
 
   // Check minimum length
-  if (password.length < 12) {
-    errors.push('비밀번호는 최소 12자 이상이어야 합니다');
+  if (password.length < 8) {
+    errors.push('비밀번호는 최소 8자 이상이어야 합니다');
   }
 
   // Check maximum length (prevent DoS attacks via bcrypt)
@@ -56,57 +49,9 @@ export function validatePassword(password, email = '', name = '') {
     errors.push('비밀번호는 최대 128자까지 가능합니다');
   }
 
-  // Check for lowercase letter
-  if (!/[a-z]/.test(password)) {
-    errors.push('영문 소문자를 포함해야 합니다');
-  }
-
-  // Check for uppercase letter
-  if (!/[A-Z]/.test(password)) {
-    errors.push('영문 대문자를 포함해야 합니다');
-  }
-
-  // Check for number
-  if (!/\d/.test(password)) {
-    errors.push('숫자를 포함해야 합니다');
-  }
-
-  // Check for special character
-  if (!/[@$!%*#?&]/.test(password)) {
-    errors.push('특수문자(@$!%*#?&)를 포함해야 합니다');
-  }
-
-  // Check if password contains common passwords
-  const lowerPassword = password.toLowerCase();
-  if (COMMON_PASSWORDS.some(common => lowerPassword.includes(common.toLowerCase()))) {
-    errors.push('흔히 사용되는 비밀번호는 사용할 수 없습니다');
-  }
-
-  // Check if password contains email (case-insensitive)
-  if (email && lowerPassword.includes(email.toLowerCase().split('@')[0])) {
-    errors.push('비밀번호에 이메일을 포함할 수 없습니다');
-  }
-
-  // Check if password contains name (case-insensitive)
-  if (name && name.length >= 3 && lowerPassword.includes(name.toLowerCase())) {
-    errors.push('비밀번호에 이름을 포함할 수 없습니다');
-  }
-
-  // Use zxcvbn to check password strength
-  // Pass email and name as user inputs to penalize passwords containing them
+  // Use zxcvbn to check password strength (for informational purposes only)
   const userInputs = [email, name].filter(Boolean);
   const result = zxcvbn(password, userInputs);
-
-  // Score: 0 (weak) to 4 (strong)
-  // Require at least score 3 (strong)
-  if (result.score < 3) {
-    errors.push('비밀번호가 너무 약합니다. 더 복잡한 비밀번호를 사용하세요');
-
-    // Add specific feedback from zxcvbn if available
-    if (result.feedback.warning) {
-      errors.push(`힌트: ${result.feedback.warning}`);
-    }
-  }
 
   return {
     valid: errors.length === 0,
