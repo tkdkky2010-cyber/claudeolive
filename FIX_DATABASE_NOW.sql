@@ -86,6 +86,3 @@ USING (true);
 -- UNCOMMENT ONLY IF you want to delete old broken user accounts:
 -- DELETE FROM users WHERE supabase_id IS NULL;
 
--- ========================================
--- DONE! Now restart your backend server
--- ========================================

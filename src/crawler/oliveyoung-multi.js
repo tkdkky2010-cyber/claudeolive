@@ -76,6 +76,8 @@ async function crawlCategory(category, rankingDate) {
       url: item.url || item.productUrl,
       imageUrl: item.imageUrl,
       category: category,
+      reviewScore: item.reviewScore || item.rating || item.score || null,
+      reviewCount: item.reviewCount || item.reviewsCount || item.reviews || null,
     })).filter(p => p.name && p.url && p.salePrice); // Filter out incomplete data
 
     if (products.length === 0) {

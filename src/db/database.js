@@ -119,12 +119,14 @@ export const productDB = {
       id: p.id,
       rank: p.rank,
       category: p.category,
-      name: p.product_name, // Map product_name to name
-      originalPrice: p.original_price, // Map original_price to originalPrice
-      salePrice: p.sale_price, // Map sale_price to salePrice
-      discountRate: p.discount_rate, // Map discount_rate to discountRate
-      url: p.oliveyoung_url, // Map oliveyoung_url to url
-      imageUrl: p.image_url, // Map image_url to imageUrl
+      name: p.product_name,
+      originalPrice: p.original_price,
+      salePrice: p.sale_price,
+      discountRate: p.discount_rate,
+      url: p.oliveyoung_url,
+      imageUrl: p.image_url,
+      reviewCount: p.review_count || null,
+      reviewScore: p.review_score || null,
       rankingDate: p.ranking_date,
       crawledAt: p.crawled_at
     }));

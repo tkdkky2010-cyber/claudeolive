@@ -40,6 +40,8 @@ export const productDB = {
       discount_rate: product.discountRate,
       oliveyoung_url: product.url,
       image_url: product.imageUrl || null,
+      review_count: product.reviewCount || null,
+      review_score: product.reviewScore || null,
       ranking_date: rankingDate,
       crawled_at: new Date().toISOString()
     }));
@@ -99,6 +101,8 @@ export const productDB = {
       discountRate: p.discount_rate,
       url: p.oliveyoung_url,
       imageUrl: p.image_url,
+      reviewCount: p.review_count || null,
+      reviewScore: p.review_score || null,
       rankingDate: p.ranking_date,
       crawledAt: p.crawled_at
     }));
@@ -131,6 +135,8 @@ export const productDB = {
       discountRate: data.discount_rate,
       url: data.oliveyoung_url,
       imageUrl: data.image_url,
+      reviewCount: data.review_count || null,
+      reviewScore: data.review_score || null,
       rankingDate: data.ranking_date,
       crawledAt: data.crawled_at
     };
@@ -165,6 +171,8 @@ export const productDB = {
       discountRate: p.discount_rate,
       url: p.oliveyoung_url,
       imageUrl: p.image_url,
+      reviewCount: p.review_count || null,
+      reviewScore: p.review_score || null,
       rankingDate: p.ranking_date,
       crawledAt: p.crawled_at
     }));

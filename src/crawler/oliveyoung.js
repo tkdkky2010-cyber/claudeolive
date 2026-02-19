@@ -119,6 +119,19 @@ async function extractProducts(page) {
         // Rank (순위)
         const rank = index + 1;
 
+        // Review score (리뷰 평점)
+        const ratingScoreElement = prdInfo.querySelector('.prd_rating .tx_num') ||
+                                   prdInfo.querySelector('.rating .num') ||
+                                   prdInfo.querySelector('[class*="rating"] .tx_num');
+        const reviewScore = ratingScoreElement ? parseFloat(ratingScoreElement.textContent.trim()) : null;
+
+        // Review count (리뷰 수)
+        const reviewCountElement = prdInfo.querySelector('.prd_rating .co_num') ||
+                                   prdInfo.querySelector('.rating .ratingCnt') ||
+                                   prdInfo.querySelector('[class*="rating"] .co_num');
+        const reviewCountText = reviewCountElement ? reviewCountElement.textContent.trim() : null;
+        const reviewCount = reviewCountText ? parseInt(reviewCountText.replace(/[^0-9]/g, '')) || null : null;
+
         // Validate data
         if (name && url && salePrice) {
           results.push({
@@ -128,7 +141,9 @@ async function extractProducts(page) {
             salePrice,
             discountRate,
             url,
-            imageUrl  // 이미지 URL 추가 (다운로드 안 함, URL만 저장)
+            imageUrl,
+            reviewScore: (reviewScore && !isNaN(reviewScore)) ? reviewScore : null,
+            reviewCount: (reviewCount && reviewCount > 0) ? reviewCount : null
           });
         }
       } catch (error) {
