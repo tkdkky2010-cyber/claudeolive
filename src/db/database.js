@@ -1,38 +1,52 @@
-import { supabase } from '../config/supabase.js';
+import Database from 'better-sqlite3';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { mkdirSync, existsSync } from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Database path from environment or default
+const DB_PATH = process.env.DB_PATH || './data/oliveyoung.db';
+
+// Ensure data directory exists
+const dbDir = dirname(DB_PATH);
+if (!existsSync(dbDir)) {
+  mkdirSync(dbDir, { recursive: true });
+}
+
+// Initialize SQLite database
+const db = new Database(DB_PATH);
+
+// Enable foreign keys
+db.pragma('foreign_keys = ON');
+
+// Enable WAL mode for better concurrency
+db.pragma('journal_mode = WAL');
 
 /**
- * Supabase Database Operations
- * This file replaces better-sqlite3 with cloud PostgreSQL database using Supabase.
- * All database interaction logic is centralized here.
+ * Initialize database schema
  */
-
-/**
- * Initialize database schema (for Supabase, this means creating tables if they don't exist)
- * This function will be called on server startup to ensure schema is ready.
- */
-export async function initializeDatabase() {
+export function initializeDatabase() {
   try {
-    // Check if the products table exists. If not, attempt to create schema.
-    const { data, error } = await supabase
-      .from('products')
-      .select('id')
-      .limit(1);
+    const schemaPath = join(__dirname, 'schema.sql');
+    const schema = readFileSync(schemaPath, 'utf-8');
 
-    if (error && error.code === '42P01') { // 42P01 is "undefined_table"
-      console.log('⚠️ Products table not found. Attempting to create schema...');
-      // In a real application, you'd run your schema-postgres.sql here
-      // For this setup, we assume the user has run it manually in Supabase.
-      // This is a placeholder for potential future auto-schema migration.
-      console.log('Please ensure src/db/schema-postgres.sql has been run in your Supabase SQL Editor.');
-      throw new Error('Supabase schema not initialized. Please run src/db/schema-postgres.sql.');
-    } else if (error) {
-      throw error; // Other Supabase errors
+    // Execute schema (split by semicolon and filter empty statements)
+    const statements = schema
+      .split(';')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    for (const statement of statements) {
+      db.exec(statement);
     }
 
-    console.log('✅ Supabase connection and schema check successful');
+    console.log('✅ Database schema initialized successfully');
     return true;
   } catch (error) {
-    console.error('❌ Failed to initialize/check Supabase schema:', error.message);
+    console.error('❌ Failed to initialize database schema:', error);
     throw error;
   }
 }
@@ -45,163 +59,153 @@ export const productDB = {
    * Insert or update products for a specific ranking date
    * Uses UPSERT logic to handle re-crawled data
    */
-  upsertProducts: async (products, rankingDate) => {
-    // Map product objects to match the Supabase 'products' table schema (snake_case)
-    const productsToInsert = products.map(product => ({
-      rank: product.rank,
-      category: product.category || '전체',
-      product_name: product.name,
-      original_price: product.originalPrice,
-      sale_price: product.salePrice,
-      discount_rate: product.discountRate,
-      oliveyoung_url: product.url,
-      image_url: product.imageUrl || null, // Ensure imageUrl is mapped to image_url
-      ranking_date: rankingDate,
-      crawled_at: new Date().toISOString()
-    }));
+  upsertProducts: (products, rankingDate) => {
+    const stmt = db.prepare(`
+      INSERT INTO products (rank, category, product_name, original_price, sale_price, discount_rate, oliveyoung_url, image_url, ranking_date, crawled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(ranking_date, category, rank) DO UPDATE SET
+        product_name = excluded.product_name,
+        original_price = excluded.original_price,
+        sale_price = excluded.sale_price,
+        discount_rate = excluded.discount_rate,
+        oliveyoung_url = excluded.oliveyoung_url,
+        image_url = excluded.image_url,
+        crawled_at = excluded.crawled_at
+    `);
 
-    // Perform the upsert operation
-    const { data, error } = await supabase
-      .from('products')
-      .upsert(productsToInsert, {
-        onConflict: 'ranking_date,category,rank', // Conflict resolution columns
-        ignoreDuplicates: false // Ensure updates happen on conflict
-      });
+    const insertMany = db.transaction((products) => {
+      for (const product of products) {
+        stmt.run(
+          product.rank,
+          product.category || '전체',
+          product.name,
+          product.originalPrice,
+          product.salePrice,
+          product.discountRate,
+          product.url,
+          product.imageUrl || null,
+          rankingDate
+        );
+      }
+    });
 
-    if (error) {
-      console.error('Supabase upsertProducts error:', error);
-      throw error;
-    }
-    return products.length; // Return count of processed products
+    insertMany(products);
+    return products.length;
   },
 
   /**
    * Get all products for the most recent ranking date
    * Filter by category (including '전체')
    */
-  getLatestProducts: async (category = null) => {
-    // Get the most recent ranking date
-    const { data: maxDateData, error: dateError } = await supabase
-      .from('products')
-      .select('ranking_date')
-      .order('ranking_date', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (dateError) {
-      console.error('Supabase getLatestProducts (maxDate) error:', dateError);
-      throw dateError;
-    }
-    if (!maxDateData) return [];
-
-    const maxDate = maxDateData.ranking_date;
-
-    // Build query to get products for the max date, optionally filtered by category
-    let query = supabase
-      .from('products')
-      .select('*') // Select all columns, including image_url
-      .eq('ranking_date', maxDate);
-
-    if (category) {
-      query = query.eq('category', category);
+  getLatestProducts: (category = null) => {
+    // If no category specified, return all
+    if (!category) {
+      return db.prepare(`
+        SELECT
+          id,
+          rank,
+          category,
+          product_name as name,
+          original_price as originalPrice,
+          sale_price as salePrice,
+          discount_rate as discountRate,
+          oliveyoung_url as url,
+          image_url as imageUrl,
+          ranking_date as rankingDate,
+          crawled_at as crawledAt
+        FROM products
+        WHERE ranking_date = (SELECT MAX(ranking_date) FROM products)
+        ORDER BY category, rank ASC
+      `).all();
     }
 
-    query = query.order('category').order('rank');
-
-    const { data, error } = await query;
-    if (error) {
-      console.error('Supabase getLatestProducts error:', error);
-      throw error;
-    }
-
-    // Transform data from snake_case to camelCase for consistency with frontend
-    return (data || []).map(p => ({
-      id: p.id,
-      rank: p.rank,
-      category: p.category,
-      name: p.product_name,
-      originalPrice: p.original_price,
-      salePrice: p.sale_price,
-      discountRate: p.discount_rate,
-      url: p.oliveyoung_url,
-      imageUrl: p.image_url,
-      reviewCount: p.review_count || null,
-      reviewScore: p.review_score || null,
-      rankingDate: p.ranking_date,
-      crawledAt: p.crawled_at
-    }));
+    // Filter by specific category (including '전체')
+    return db.prepare(`
+      SELECT
+        id,
+        rank,
+        category,
+        product_name as name,
+        original_price as originalPrice,
+        sale_price as salePrice,
+        discount_rate as discountRate,
+        oliveyoung_url as url,
+        image_url as imageUrl,
+        ranking_date as rankingDate,
+        crawled_at as crawledAt
+      FROM products
+      WHERE ranking_date = (SELECT MAX(ranking_date) FROM products)
+        AND category = ?
+      ORDER BY rank ASC
+    `).all(category);
   },
 
   /**
    * Get a single product by ID
    */
-  getProductById: async (id) => {
-    const { data, error } = await supabase
-      .from('products')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null; // Not found
-      console.error('Supabase getProductById error:', error);
-      throw error;
-    }
-
-    if (!data) return null;
-
-    // Transform data from snake_case to camelCase
-    return {
-      id: data.id,
-      rank: data.rank,
-      category: data.category,
-      name: data.product_name,
-      originalPrice: data.original_price,
-      salePrice: data.sale_price,
-      discountRate: data.discount_rate,
-      url: data.oliveyoung_url,
-      imageUrl: data.image_url,
-      rankingDate: data.ranking_date,
-      crawledAt: data.crawled_at
-    };
+  getProductById: (id) => {
+    return db.prepare(`
+      SELECT
+        id,
+        rank,
+        category,
+        product_name as name,
+        original_price as originalPrice,
+        sale_price as salePrice,
+        discount_rate as discountRate,
+        oliveyoung_url as url,
+        image_url as imageUrl,
+        ranking_date as rankingDate,
+        crawled_at as crawledAt
+      FROM products
+      WHERE id = ?
+    `).get(id);
   },
 
   /**
    * Get products by ranking date
    * Filter by category (including '전체')
    */
-  getProductsByDate: async (rankingDate, category = null) => {
-    let query = supabase
-      .from('products')
-      .select('*')
-      .eq('ranking_date', rankingDate);
-
-    if (category) {
-      query = query.eq('category', category);
+  getProductsByDate: (rankingDate, category = null) => {
+    // If no category specified, return all
+    if (!category) {
+      return db.prepare(`
+        SELECT
+          id,
+          rank,
+          category,
+          product_name as name,
+          original_price as originalPrice,
+          sale_price as salePrice,
+          discount_rate as discountRate,
+          oliveyoung_url as url,
+          image_url as imageUrl,
+          ranking_date as rankingDate,
+          crawled_at as crawledAt
+        FROM products
+        WHERE ranking_date = ?
+        ORDER BY category, rank ASC
+      `).all(rankingDate);
     }
 
-    query = query.order('category').order('rank');
-
-    const { data, error } = await query;
-    if (error) {
-      console.error('Supabase getProductsByDate error:', error);
-      throw error;
-    }
-
-    // Transform data from snake_case to camelCase
-    return (data || []).map(p => ({
-      id: p.id,
-      rank: p.rank,
-      category: p.category,
-      name: p.product_name,
-      originalPrice: p.original_price,
-      salePrice: p.sale_price,
-      discountRate: p.discount_rate,
-      url: p.oliveyoung_url,
-      imageUrl: p.image_url,
-      rankingDate: p.ranking_date,
-      crawledAt: p.crawled_at
-    }));
+    // Filter by specific category (including '전체')
+    return db.prepare(`
+      SELECT
+        id,
+        rank,
+        category,
+        product_name as name,
+        original_price as originalPrice,
+        sale_price as salePrice,
+        discount_rate as discountRate,
+        oliveyoung_url as url,
+        image_url as imageUrl,
+        ranking_date as rankingDate,
+        crawled_at as crawledAt
+      FROM products
+      WHERE ranking_date = ? AND category = ?
+      ORDER BY rank ASC
+    `).all(rankingDate, category);
   }
 };
 
@@ -212,162 +216,61 @@ export const userDB = {
   /**
    * Create or update user from Google OAuth
    */
-  upsertUser: async (supabaseId, email, name, avatarUrl) => {
-    const { data, error } = await supabase
-      .from('users')
-      .upsert({
-        supabase_id: supabaseId,
-        google_id: supabaseId, // For Google users, use same ID
-        email: email,
-        name: name,
-        avatar_url: avatarUrl,
-        auth_method: 'google'
-      }, {
-        onConflict: 'supabase_id',
-        ignoreDuplicates: false
-      })
-      .select()
-      .single();
+  upsertUser: (googleId, email, name, avatarUrl) => {
+    const stmt = db.prepare(`
+      INSERT INTO users (google_id, email, name, avatar_url)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(google_id) DO UPDATE SET
+        email = excluded.email,
+        name = excluded.name,
+        avatar_url = excluded.avatar_url
+    `);
 
-    if (error) {
-      console.error('Supabase upsertUser error:', error);
-      throw error;
-    }
-    return data;
+    stmt.run(googleId, email, name, avatarUrl);
+
+    return db.prepare('SELECT * FROM users WHERE google_id = ?').get(googleId);
   },
 
   /**
    * Get user by Google ID
    */
-  getUserByGoogleId: async (googleId) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('google_id', googleId)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getUserByGoogleId error:', error);
-      throw error;
-    }
-    return data;
+  getUserByGoogleId: (googleId) => {
+    return db.prepare('SELECT * FROM users WHERE google_id = ?').get(googleId);
   },
 
   /**
-   * Get user by ID (Internal Integer ID or Supabase UUID)
+   * Get user by ID
    */
-  getUserById: async (id) => {
-    let query = supabase.from('users').select('*');
-
-    // Check if id is a UUID (Supabase string ID) or a BIGINT (our internal ID)
-    if (typeof id === 'string' && id.includes('-')) {
-      query = query.eq('supabase_id', id);
-    } else {
-      query = query.eq('id', id);
-    }
-
-    const { data, error } = await query.single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getUserById error:', error);
-      throw error;
-    }
-    return data;
-  },
-
-  /**
-   * Get user by Supabase UUID
-   */
-  getUserBySupabaseId: async (supabaseId) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('supabase_id', supabaseId)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getUserBySupabaseId error:', error);
-      throw error;
-    }
-    return data;
+  getUserById: (id) => {
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   },
 
   /**
    * Get user by email
    */
-  getUserByEmail: async (email) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getUserByEmail error:', error);
-      throw error;
-    }
-    return data;
+  getUserByEmail: (email) => {
+    return db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   },
 
   /**
    * Create email user (for email-based signup)
    */
-  createEmailUser: async (email, passwordHash, name = null, supabaseId = null) => {
-    const { data, error } = await supabase
-      .from('users')
-      .insert({
-        supabase_id: supabaseId,
-        email: email,
-        password_hash: passwordHash,
-        name: name,
-        auth_method: 'email',
-        role: 'user',
-        email_verified: false
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Supabase createEmailUser error:', error);
-      throw error;
-    }
-    return data;
+  createEmailUser: (email, passwordHash, name = null) => {
+    const stmt = db.prepare(`
+      INSERT INTO users (email, password_hash, name, auth_method, role, email_verified)
+      VALUES (?, ?, ?, 'email', 'user', 0)
+    `);
+    const result = stmt.run(email, passwordHash, name);
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
   },
 
   /**
    * Update user role (admin management)
    */
-  updateUserRole: async (userId, role) => {
-    const { error } = await supabase
-      .from('users')
-      .update({ role: role })
-      .eq('id', userId);
-
-    if (error) {
-      console.error('Supabase updateUserRole error:', error);
-      throw error;
-    }
-    return true;
-  },
-
-  /**
-   * Update email verification status
-   */
-  updateEmailVerification: async (userId, verified) => {
-    const { error } = await supabase
-      .from('users')
-      .update({ email_verified: verified })
-      .eq('id', userId);
-
-    if (error) {
-      console.error('Supabase updateEmailVerification error:', error);
-      throw error;
-    }
-    return true;
+  updateUserRole: (userId, role) => {
+    const stmt = db.prepare('UPDATE users SET role = ? WHERE id = ?');
+    const result = stmt.run(role, userId);
+    return result.changes > 0;
   }
 };
 
@@ -378,146 +281,77 @@ export const cartDB = {
   /**
    * Get all cart items for a user
    */
-  getCartItems: async (userId) => {
-    const { data, error } = await supabase
-      .from('cart_items')
-      .select(`
-        id,
-        quantity,
-        created_at,
-        products (
-          id,
-          rank,
-          category,
-          product_name,
-          original_price,
-          sale_price,
-          discount_rate,
-          oliveyoung_url,
-          image_url
-        )
-      `)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Supabase getCartItems error:', error);
-      throw error;
-    }
-
-    // Transform to match expected format (camelCase for product details)
-    return (data || []).map(item => ({
-      id: item.id,
-      quantity: item.quantity,
-      createdAt: item.created_at,
-      productId: item.products.id,
-      rank: item.products.rank,
-      category: item.products.category,
-      name: item.products.product_name,
-      originalPrice: item.products.original_price,
-      salePrice: item.products.sale_price,
-      discountRate: item.products.discount_rate,
-      url: item.products.oliveyoung_url,
-      imageUrl: item.products.image_url
-    }));
+  getCartItems: (userId) => {
+    return db.prepare(`
+      SELECT
+        c.id,
+        c.quantity,
+        c.created_at as createdAt,
+        p.id as productId,
+        p.rank,
+        p.category,
+        p.product_name as name,
+        p.original_price as originalPrice,
+        p.sale_price as salePrice,
+        p.discount_rate as discountRate,
+        p.oliveyoung_url as url,
+        p.image_url as imageUrl
+      FROM cart_items c
+      JOIN products p ON c.product_id = p.id
+      WHERE c.user_id = ?
+      ORDER BY c.created_at DESC
+    `).all(userId);
   },
 
   /**
    * Add item to cart (or update quantity if already exists)
    */
-  addToCart: async (userId, productId, quantity = 1) => {
-    // Check if item already exists
-    const { data: existing, error: selectError } = await supabase
-      .from('cart_items')
-      .select('id, quantity')
-      .eq('user_id', userId)
-      .eq('product_id', productId)
-      .single();
+  addToCart: (userId, productId, quantity = 1) => {
+    const stmt = db.prepare(`
+      INSERT INTO cart_items (user_id, product_id, quantity)
+      VALUES (?, ?, ?)
+      ON CONFLICT(user_id, product_id) DO UPDATE SET
+        quantity = quantity + excluded.quantity
+    `);
 
-    if (selectError && selectError.code !== 'PGRST116') { // PGRST116 is "no rows found"
-      console.error('Supabase addToCart (select) error:', selectError);
-      throw selectError;
-    }
-
-    if (existing) {
-      // Update existing item
-      const { error: updateError } = await supabase
-        .from('cart_items')
-        .update({ quantity: existing.quantity + quantity })
-        .eq('id', existing.id);
-
-      if (updateError) {
-        console.error('Supabase addToCart (update) error:', updateError);
-        throw updateError;
-      }
-      return true;
-    } else {
-      // Insert new item
-      const { error: insertError } = await supabase
-        .from('cart_items')
-        .insert({
-          user_id: userId,
-          product_id: productId,
-          quantity: quantity
-        });
-
-      if (insertError) {
-        console.error('Supabase addToCart (insert) error:', insertError);
-        throw insertError;
-      }
-      return true;
-    }
+    const result = stmt.run(userId, productId, quantity);
+    return result.changes > 0;
   },
 
   /**
    * Update cart item quantity
    */
-  updateQuantity: async (cartItemId, userId, quantity) => {
-    const { error } = await supabase
-      .from('cart_items')
-      .update({ quantity: quantity })
-      .eq('id', cartItemId)
-      .eq('user_id', userId);
+  updateQuantity: (cartItemId, userId, quantity) => {
+    const stmt = db.prepare(`
+      UPDATE cart_items
+      SET quantity = ?
+      WHERE id = ? AND user_id = ?
+    `);
 
-    if (error) {
-      console.error('Supabase updateQuantity error:', error);
-      throw error;
-    }
-    return true;
+    const result = stmt.run(quantity, cartItemId, userId);
+    return result.changes > 0;
   },
 
   /**
    * Remove item from cart
    */
-  removeFromCart: async (cartItemId, userId) => {
-    const { error } = await supabase
-      .from('cart_items')
-      .delete()
-      .eq('id', cartItemId)
-      .eq('user_id', userId);
+  removeFromCart: (cartItemId, userId) => {
+    const stmt = db.prepare(`
+      DELETE FROM cart_items
+      WHERE id = ? AND user_id = ?
+    `);
 
-    if (error) {
-      console.error('Supabase removeFromCart error:', error);
-      throw error;
-    }
-    return true;
+    const result = stmt.run(cartItemId, userId);
+    return result.changes > 0;
   },
 
   /**
    * Clear all cart items for a user
    */
-  clearCart: async (userId) => {
-    const { data, error } = await supabase
-      .from('cart_items')
-      .delete()
-      .eq('user_id', userId)
-      .select();
-
-    if (error) {
-      console.error('Supabase clearCart error:', error);
-      throw error;
-    }
-    return (data || []).length;
+  clearCart: (userId) => {
+    const stmt = db.prepare('DELETE FROM cart_items WHERE user_id = ?');
+    const result = stmt.run(userId);
+    return result.changes;
   }
 };
 
@@ -528,58 +362,216 @@ export const crawlLogDB = {
   /**
    * Create a new crawl log entry
    */
-  createLog: async () => {
-    const { data, error } = await supabase
-      .from('crawl_logs')
-      .insert({
-        started_at: new Date().toISOString(),
-        status: 'running'
-      })
-      .select()
-      .single();
+  createLog: () => {
+    const stmt = db.prepare(`
+      INSERT INTO crawl_logs (started_at, status)
+      VALUES (datetime('now'), 'running')
+    `);
 
-    if (error) {
-      console.error('Supabase createLog error:', error);
-      throw error;
-    }
-    return data.id;
+    const result = stmt.run();
+    return result.lastInsertRowid;
   },
 
   /**
    * Update crawl log on completion
    */
-  completeLog: async (logId, status, productsCount = 0, errorMessage = null) => {
-    const { error } = await supabase
-      .from('crawl_logs')
-      .update({
-        completed_at: new Date().toISOString(),
-        status: status,
-        products_count: productsCount,
-        error_message: errorMessage
-      })
-      .eq('id', logId);
+  completeLog: (logId, status, productsCount = 0, errorMessage = null) => {
+    const stmt = db.prepare(`
+      UPDATE crawl_logs
+      SET completed_at = datetime('now'),
+          status = ?,
+          products_count = ?,
+          error_message = ?
+      WHERE id = ?
+    `);
 
-    if (error) {
-      console.error('Supabase completeLog error:', error);
-      throw error;
-    }
+    stmt.run(status, productsCount, errorMessage, logId);
   },
 
   /**
    * Get recent crawl logs
    */
-  getRecentLogs: async (limit = 10) => {
-    const { data, error } = await supabase
-      .from('crawl_logs')
-      .select('*')
-      .order('started_at', { ascending: false })
-      .limit(limit);
+  getRecentLogs: (limit = 10) => {
+    return db.prepare(`
+      SELECT *
+      FROM crawl_logs
+      ORDER BY started_at DESC
+      LIMIT ?
+    `).all(limit);
+  }
+};
 
-    if (error) {
-      console.error('Supabase getRecentLogs error:', error);
-      throw error;
+/**
+ * Admin-related database operations (Seller Center)
+ */
+export const adminDB = {
+  /**
+   * Get admin by email
+   */
+  getAdminByEmail: (email) => {
+    return db.prepare('SELECT * FROM admins WHERE email = ?').get(email);
+  },
+
+  /**
+   * Get admin by ID
+   */
+  getAdminById: (id) => {
+    return db.prepare('SELECT * FROM admins WHERE id = ?').get(id);
+  },
+
+  /**
+   * Update last login time
+   */
+  updateLastLogin: (adminId) => {
+    const stmt = db.prepare('UPDATE admins SET last_login_at = datetime(\'now\') WHERE id = ?');
+    stmt.run(adminId);
+  }
+};
+
+/**
+ * Order-related database operations
+ */
+export const orderDB = {
+  /**
+   * Get all orders with pagination
+   */
+  getAllOrders: (limit = 50, offset = 0, status = null) => {
+    let query = `
+      SELECT o.*, u.email as user_email, u.name as user_name
+      FROM orders o
+      JOIN users u ON o.user_id = u.id
+    `;
+
+    if (status) {
+      query += ` WHERE o.status = ?`;
     }
-    return data || [];
+
+    query += ` ORDER BY o.created_at DESC LIMIT ? OFFSET ?`;
+
+    if (status) {
+      return db.prepare(query).all(status, limit, offset);
+    }
+    return db.prepare(query).all(limit, offset);
+  },
+
+  /**
+   * Get order by ID with items
+   */
+  getOrderById: (orderId) => {
+    const order = db.prepare(`
+      SELECT o.*, u.email as user_email, u.name as user_name
+      FROM orders o
+      JOIN users u ON o.user_id = u.id
+      WHERE o.id = ?
+    `).get(orderId);
+
+    if (!order) return null;
+
+    const items = db.prepare(`
+      SELECT * FROM order_items WHERE order_id = ?
+    `).all(orderId);
+
+    return { ...order, items };
+  },
+
+  /**
+   * Update order status
+   */
+  updateOrderStatus: (orderId, status) => {
+    const stmt = db.prepare(`
+      UPDATE orders SET status = ?, updated_at = datetime('now') WHERE id = ?
+    `);
+    const result = stmt.run(status, orderId);
+    return result.changes > 0;
+  },
+
+  /**
+   * Get order count by status
+   */
+  getOrderCountByStatus: () => {
+    return db.prepare(`
+      SELECT status, COUNT(*) as count
+      FROM orders
+      GROUP BY status
+    `).all();
+  }
+};
+
+/**
+ * Shipment-related database operations
+ */
+export const shipmentDB = {
+  /**
+   * Create or update shipment
+   */
+  upsertShipment: (orderId, courier, trackingNumber) => {
+    const stmt = db.prepare(`
+      INSERT INTO shipments (order_id, courier, tracking_number, shipped_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(order_id) DO UPDATE SET
+        courier = excluded.courier,
+        tracking_number = excluded.tracking_number,
+        shipped_at = datetime('now')
+    `);
+    stmt.run(orderId, courier, trackingNumber);
+  },
+
+  /**
+   * Get shipment by order ID
+   */
+  getByOrderId: (orderId) => {
+    return db.prepare('SELECT * FROM shipments WHERE order_id = ?').get(orderId);
+  },
+
+  /**
+   * Mark as delivered
+   */
+  markAsDelivered: (orderId) => {
+    const stmt = db.prepare(`
+      UPDATE shipments SET delivered_at = datetime('now') WHERE order_id = ?
+    `);
+    stmt.run(orderId);
+  }
+};
+
+/**
+ * Return-related database operations
+ */
+export const returnDB = {
+  /**
+   * Get all returns
+   */
+  getAllReturns: (limit = 50, offset = 0, status = null) => {
+    let query = `
+      SELECT r.*, o.order_number, u.email as user_email
+      FROM returns r
+      JOIN orders o ON r.order_id = o.id
+      JOIN users u ON o.user_id = u.id
+    `;
+
+    if (status) {
+      query += ` WHERE r.status = ?`;
+    }
+
+    query += ` ORDER BY r.created_at DESC LIMIT ? OFFSET ?`;
+
+    if (status) {
+      return db.prepare(query).all(status, limit, offset);
+    }
+    return db.prepare(query).all(limit, offset);
+  },
+
+  /**
+   * Update return status
+   */
+  updateReturnStatus: (returnId, status, adminMemo = null) => {
+    const stmt = db.prepare(`
+      UPDATE returns
+      SET status = ?, admin_memo = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `);
+    const result = stmt.run(status, adminMemo, returnId);
+    return result.changes > 0;
   }
 };
 
@@ -590,88 +582,52 @@ export const emailVerificationDB = {
   /**
    * Create a new email verification token
    */
-  createToken: async (userId, token) => {
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + 24); // 24 hours from now
-
-    const { error } = await supabase
-      .from('email_verification_tokens')
-      .insert({
-        user_id: userId,
-        token: token,
-        expires_at: expiresAt.toISOString()
-      });
-
-    if (error) {
-      console.error('Supabase createToken error:', error);
-      throw error;
-    }
+  createToken: (userId, token) => {
+    const stmt = db.prepare(`
+      INSERT INTO email_verification_tokens (user_id, token, expires_at)
+      VALUES (?, ?, datetime('now', '+24 hours'))
+    `);
+    stmt.run(userId, token);
   },
 
   /**
    * Get token details by token string
    */
-  getToken: async (token) => {
-    const { data, error } = await supabase
-      .from('email_verification_tokens')
-      .select('*')
-      .eq('token', token)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getToken error:', error);
-      throw error;
-    }
-    return data;
+  getToken: (token) => {
+    return db.prepare(`
+      SELECT * FROM email_verification_tokens
+      WHERE token = ?
+    `).get(token);
   },
 
   /**
    * Verify and use a token
    */
-  useToken: async (token) => {
-    // Get token data
-    const { data: tokenData, error: tokenError } = await supabase
-      .from('email_verification_tokens')
-      .select('*')
-      .eq('token', token)
-      .eq('used', false)
-      .gt('expires_at', new Date().toISOString())
-      .single();
+  useToken: (token) => {
+    const tokenData = db.prepare(`
+      SELECT * FROM email_verification_tokens
+      WHERE token = ?
+        AND used = 0
+        AND expires_at > datetime('now')
+    `).get(token);
 
-    if (tokenError) {
-      if (tokenError.code !== 'PGRST116') {
-        console.error('Supabase useToken (select) error:', tokenError);
-        throw tokenError;
-      }
-      return null; // Token not found or already used/expired
+    if (!tokenData) {
+      return null;
     }
-    if (!tokenData) return null;
 
     // Mark token as used
-    const { error: updateTokenError } = await supabase
-      .from('email_verification_tokens')
-      .update({
-        used: true,
-        used_at: new Date().toISOString()
-      })
-      .eq('id', tokenData.id);
-
-    if (updateTokenError) {
-      console.error('Supabase useToken (update token) error:', updateTokenError);
-      throw updateTokenError;
-    }
+    db.prepare(`
+      UPDATE email_verification_tokens
+      SET used = 1, used_at = datetime('now')
+      WHERE id = ?
+    `).run(tokenData.id);
 
     // Mark user as verified
-    const { error: updateUserError } = await supabase
-      .from('users')
-      .update({ email_verified: true })
-      .eq('id', tokenData.user_id);
-
-    if (updateUserError) {
-      console.error('Supabase useToken (update user) error:', updateUserError);
-      throw updateUserError;
-    }
+    db.prepare(`
+      UPDATE users
+      SET email_verified = 1
+      WHERE id = ?
+    `).run(tokenData.user_id);
 
     return tokenData;
   },
@@ -679,21 +635,13 @@ export const emailVerificationDB = {
   /**
    * Clean up expired tokens (older than 7 days)
    */
-  cleanupExpiredTokens: async () => {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-    const { data, error } = await supabase
-      .from('email_verification_tokens')
-      .delete()
-      .lt('expires_at', sevenDaysAgo.toISOString())
-      .select();
-
-    if (error) {
-      console.error('Supabase cleanupExpiredTokens error:', error);
-      throw error;
-    }
-    return (data || []).length;
+  cleanupExpiredTokens: () => {
+    const stmt = db.prepare(`
+      DELETE FROM email_verification_tokens
+      WHERE expires_at < datetime('now', '-7 days')
+    `);
+    const result = stmt.run();
+    return result.changes;
   }
 };
 
@@ -704,292 +652,106 @@ export const authDB = {
   /**
    * Get count of recent failed login attempts for an email
    */
-  getRecentFailedAttempts: async (email) => {
-    const fifteenMinutesAgo = new Date();
-    fifteenMinutesAgo.setMinutes(fifteenMinutesAgo.getMinutes() - 15);
-
-    const { count, error } = await supabase
-      .from('login_attempts')
-      .select('*', { count: 'exact', head: false })
-      .eq('email', email)
-      .eq('successful', false)
-      .gt('attempted_at', fifteenMinutesAgo.toISOString());
-
-    if (error) {
-      console.error('Supabase getRecentFailedAttempts error:', error);
-      throw error;
-    }
-    return { count: count || 0 };
+  getRecentFailedAttempts: (email) => {
+    return db.prepare(`
+      SELECT COUNT(*) as count
+      FROM login_attempts
+      WHERE email = ?
+        AND successful = 0
+        AND attempted_at > datetime('now', '-15 minutes')
+    `).get(email);
   },
 
   /**
    * Record a login attempt (successful or failed)
    */
-  recordLoginAttempt: async (email, ipAddress, successful) => {
-    const { error } = await supabase
-      .from('login_attempts')
-      .insert({
-        email: email,
-        ip_address: ipAddress,
-        successful: successful,
-        attempted_at: new Date().toISOString()
-      });
-
-    if (error) {
-      console.error('Supabase recordLoginAttempt error:', error);
-      throw error;
-    }
+  recordLoginAttempt: (email, ipAddress, successful) => {
+    const stmt = db.prepare(`
+      INSERT INTO login_attempts (email, ip_address, successful, attempted_at)
+      VALUES (?, ?, ?, datetime('now'))
+    `);
+    stmt.run(email, ipAddress, successful ? 1 : 0);
   },
 
   /**
    * Clear all login attempts for an email (after successful login or timeout)
    */
-  clearLoginAttempts: async (email) => {
-    const { error } = await supabase
-      .from('login_attempts')
-      .delete()
-      .eq('email', email);
-
-    if (error) {
-      console.error('Supabase clearLoginAttempts error:', error);
-      throw error;
-    }
+  clearLoginAttempts: (email) => {
+    const stmt = db.prepare('DELETE FROM login_attempts WHERE email = ?');
+    stmt.run(email);
   },
 
   /**
    * Clean up old login attempts (older than 24 hours)
    */
-  cleanupOldAttempts: async () => {
-    const twentyFourHoursAgo = new Date();
-    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-
-    const { data, error } = await supabase
-      .from('login_attempts')
-      .delete()
-      .lt('attempted_at', twentyFourHoursAgo.toISOString())
-      .select();
-
-    if (error) {
-      console.error('Supabase cleanupOldAttempts error:', error);
-      throw error;
-    }
-    return (data || []).length;
+  cleanupOldAttempts: () => {
+    const stmt = db.prepare(`
+      DELETE FROM login_attempts
+      WHERE attempted_at < datetime('now', '-24 hours')
+    `);
+    const result = stmt.run();
+    return result.changes;
   }
 };
 
-// Stub exports for tables not yet implemented in Supabase (if needed, ensure they are in schema)
-export const adminDB = {
-  getAdminByEmail: async (email) => {
-    const { data, error } = await supabase
-      .from('admins') // Assuming an 'admins' table exists
-      .select('*')
-      .eq('email', email)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getAdminByEmail error:', error);
-      throw error;
-    }
-    return data;
-  },
-  getAdminById: async (id) => {
-    const { data, error } = await supabase
-      .from('admins')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getAdminById error:', error);
-      throw error;
-    }
-    return data;
-  },
-  updateLastLogin: async (adminId) => {
-    const { error } = await supabase
-      .from('admins')
-      .update({ last_login_at: new Date().toISOString() })
-      .eq('id', adminId);
-
-    if (error) {
-      console.error('Supabase updateLastLogin error:', error);
-      throw error;
-    }
-    return true;
-  }
-};
-
-export const orderDB = {
-  getAllOrders: async () => {
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*');
-
-    if (error) {
-      console.error('Supabase getAllOrders error:', error);
-      throw error;
-    }
-    return data || [];
-  },
-  getOrderById: async (id) => {
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getOrderById error:', error);
-      throw error;
-    }
-    return data;
-  },
-  updateOrderStatus: async (id, status) => {
-    const { error } = await supabase
-      .from('orders')
-      .update({ status: status })
-      .eq('id', id);
-
-    if (error) {
-      console.error('Supabase updateOrderStatus error:', error);
-      throw error;
-    }
-    return true;
-  },
-  getOrderCountByStatus: async () => {
-    const { count, error } = await supabase
-      .from('orders')
-      .select('*', { count: 'exact', head: false })
-      .is('status', null); // Adjust based on actual status column and desired filter
-
-    if (error) {
-      console.error('Supabase getOrderCountByStatus error:', error);
-      throw error;
-    }
-    return count || 0;
-  }
-};
-
-export const shipmentDB = {
-  upsertShipment: async (shipmentData) => {
-    const { data, error } = await supabase
-      .from('shipments')
-      .upsert(shipmentData, { onConflict: 'order_id' }); // Assuming order_id is unique and primary for upsert
-
-    if (error) {
-      console.error('Supabase upsertShipment error:', error);
-      throw error;
-    }
-    return data;
-  },
-  getByOrderId: async (orderId) => {
-    const { data, error } = await supabase
-      .from('shipments')
-      .select('*')
-      .eq('order_id', orderId)
-      .single();
-
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getByOrderId error:', error);
-      throw error;
-    }
-    return data;
-  },
-  markAsDelivered: async (shipmentId) => {
-    const { error } = await supabase
-      .from('shipments')
-      .update({ status: 'delivered', delivered_at: new Date().toISOString() })
-      .eq('id', shipmentId);
-
-    if (error) {
-      console.error('Supabase markAsDelivered error:', error);
-      throw error;
-    }
-    return true;
-  }
-};
-
-export const returnDB = {
-  getAllReturns: async () => {
-    const { data, error } = await supabase
-      .from('returns')
-      .select('*');
-
-    if (error) {
-      console.error('Supabase getAllReturns error:', error);
-      throw error;
-    }
-    return data || [];
-  },
-  updateReturnStatus: async (returnId, status) => {
-    const { error } = await supabase
-      .from('returns')
-      .update({ status: status })
-      .eq('id', returnId);
-
-    if (error) {
-      console.error('Supabase updateReturnStatus error:', error);
-      throw error;
-    }
-    return true;
-  }
-};
-
+/**
+ * CS Inquiry-related database operations
+ */
 export const csDB = {
-  getAllInquiries: async () => {
-    const { data, error } = await supabase
-      .from('cs_inquiries')
-      .select('*');
+  /**
+   * Get all inquiries
+   */
+  getAllInquiries: (limit = 50, offset = 0, status = null) => {
+    let query = `
+      SELECT c.*, u.email as user_email, u.name as user_name
+      FROM cs_inquiries c
+      JOIN users u ON c.user_id = u.id
+    `;
 
-    if (error) {
-      console.error('Supabase getAllInquiries error:', error);
-      throw error;
+    if (status) {
+      query += ` WHERE c.status = ?`;
     }
-    return data || [];
+
+    query += ` ORDER BY c.created_at DESC LIMIT ? OFFSET ?`;
+
+    if (status) {
+      return db.prepare(query).all(status, limit, offset);
+    }
+    return db.prepare(query).all(limit, offset);
   },
-  getInquiryById: async (id) => {
-    const { data, error } = await supabase
-      .from('cs_inquiries')
-      .select('*')
-      .eq('id', id)
-      .single();
 
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      console.error('Supabase getInquiryById error:', error);
-      throw error;
-    }
-    return data;
+  /**
+   * Get inquiry by ID
+   */
+  getInquiryById: (inquiryId) => {
+    return db.prepare(`
+      SELECT c.*, u.email as user_email, u.name as user_name
+      FROM cs_inquiries c
+      JOIN users u ON c.user_id = u.id
+      WHERE c.id = ?
+    `).get(inquiryId);
   },
-  replyToInquiry: async (inquiryId, replyText) => {
-    const { error } = await supabase
-      .from('cs_inquiries')
-      .update({ reply_text: replyText, status: 'replied', replied_at: new Date().toISOString() })
-      .eq('id', inquiryId);
 
-    if (error) {
-      console.error('Supabase replyToInquiry error:', error);
-      throw error;
-    }
-    return true;
+  /**
+   * Reply to inquiry
+   */
+  replyToInquiry: (inquiryId, adminId, reply) => {
+    const stmt = db.prepare(`
+      UPDATE cs_inquiries
+      SET admin_reply = ?, admin_id = ?, status = 'answered', answered_at = datetime('now')
+      WHERE id = ?
+    `);
+    const result = stmt.run(reply, adminId, inquiryId);
+    return result.changes > 0;
   },
-  getPendingCount: async () => {
-    const { count, error } = await supabase
-      .from('cs_inquiries')
-      .select('*', { count: 'exact', head: false })
-      .eq('status', 'pending');
 
-    if (error) {
-      console.error('Supabase getPendingCount error:', error);
-      throw error;
-    }
-    return count || 0;
+  /**
+   * Get pending inquiry count
+   */
+  getPendingCount: () => {
+    return db.prepare(`SELECT COUNT(*) as count FROM cs_inquiries WHERE status = 'pending'`).get().count;
   }
 };
 
-
-export default supabase;
+// Export database instance for custom queries if needed
+export default db;

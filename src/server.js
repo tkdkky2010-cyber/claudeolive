@@ -7,7 +7,7 @@ import cors from 'cors';
 import cron from 'node-cron';
 import helmet from 'helmet';
 import { initializeDatabase } from './db/database.js';
-import { crawlWithRetry } from './crawler/oliveyoung-multi.js';
+import { crawlWithRetry } from './crawler/oliveyoung.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { AUTH_CONFIG } from './config/auth.js';
 
